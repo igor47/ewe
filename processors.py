@@ -15,6 +15,7 @@ class basic(baseProcessor.baseProcessor):
 		try:
 			self.readRequest()
 			self.parseRequest()
+			self.parseUrl()
 			self.openResponse()
 		except self.Error:
 			self.sendError()

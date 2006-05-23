@@ -41,7 +41,10 @@ class baseProcessor:
 	multilineHeader = re.compile(r",\s*$\s+",re.MULTILINE)
 	headerLineRe = re.compile(r"^(\S+?):\s*(.+)$")
 	headerValues = re.compile(r"\s*(\S+?)\s*(?:$|,)")
-
+	
+	schemeUrl = re.compile(r"http://(.*)")
+	hostUrl = re.compile(r"^([^/]+)(.*)")
+	queryString = re.compile(r"([^\?]+)(\?.*)?")
 
 	class Error(Exception):
 		"""Used to propogate any error condition in request parsing"""
@@ -76,6 +79,7 @@ class baseProcessor:
 
 		self.sock.shutdown(socket.SHUT_RD)		#no more reading on the socket
 		self.request = "".join(pieces)
+		print self.request
 	
 	def parseHeaders(self,headerstring):
 		self.multilineHeader.sub(',',headerstring)
@@ -102,11 +106,35 @@ class baseProcessor:
 			self.code = 501
 			raise self.Error
 			
-		request['uri'] = urlDecode(match.group(2))
+		request['url'] = urlDecode(match.group(2))
 		request['headers'] = self.parseHeaders(match.group(4))
 		self.request = request
 	
+	def parseUrl(self):
+		url = self.request['url']
+		match = self.schemeUrl.match(url)
+		if match:
+			url = match.group(1)
+		match = self.hostUrl.match(url)
+		if match:
+			url = match.group(2)
+			self.request["host"] = match.group(1)
+			
+		url,queryString = self.queryString.match(url).groups()
+		if queryString:
+			self.request["query"] = queryString.lstrip('?')
+
+		self.documentroot = os.path.abspath(self.documentroot)
+		self.request["path"] = os.path.normpath(self.documentroot + url)
+	
 	def openResponse(self):
+		root = self.documentroot
+		rpath = self.request["path"]
+		
+		if os.path.commonprefix((root,rpath)) != root:
+			self.code = 403
+			raise self.Error
+
 		self.code = 200
 		self.request["content-type"] = 'text/html'
 		self.request["last-modified"] = httpdate()
@@ -132,7 +160,7 @@ class baseProcessor:
 		<html>
 		<head><title>Error</title></head>
 		<body>
-		<h1>%d - %s</h1>
+		<h1>%d - %s</h1><br>
 		<hr>
 		Ewe Server - version 1.0 - CMSC 33300
 		</body>
@@ -147,7 +175,7 @@ class baseProcessor:
 		<html>
 		<head><title>The page!</title></head>
 		<body>
-		<h1>the page!</h1>
+		<h1>the page!</h1>""" + str(self.request) + """
 		</body></html>"""
 
 		self.sock.sendall(page)

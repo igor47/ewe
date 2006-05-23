@@ -88,10 +88,7 @@ def main():
 			if logger: logger.quit()
 
 	except socket.error, e:
-		if len(e) == 2:
-			print "Socket Error %d: %s ... Quiting" % (e[0],e[1])
-		else:
-			print "Socket Error: %s ... Quiting" % (e)
+		print "Socket Error: %s ... Quiting" % (e)
 		sys.exit(8)
 	except KeyboardInterrupt:
 		print "Interrupt caught ... Quiting"

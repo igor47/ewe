@@ -1,13 +1,16 @@
 #!/usr/bin/env python
 
-class basic:
-	def __init__(self):
-		pass
+import os, sys
+import signal
+import baseProcessor
+
+class basic(baseProcessor.baseProcessor):
+	def __init__(self,logger):
+		baseProcessor.baseProcessor.__init__(self,logger)
 		
 	def process(self,sock,address):
 		self.sock = sock
 		self.peer = address
-		self.error = 0
 		
 		try:
 			self.readRequest()
@@ -21,15 +24,16 @@ class basic:
 	def quit(self):
 		pass
 
-class forked:
-	def __init__(self):
+class forked(baseProcessor.baseProcessor):
+	def __init__(self,logger):
+		baseProcessor.baseProcessor.__init__(self,logger)
 		self.childlist = list()
 		self.prevsignal = signal.signal(signal.SIGCHLD,self.reaper)
 
 	def reaper(self):
 		pid,status = os.waitpid(-1,os.WNOHANG)
 		while pid != 0:
-			if WIFSIGNALED(status) or WIFEXITED(status):
+			if os.WIFSIGNALED(status) or os.WIFEXITED(status):
 				self.childlist.remove(pid)
 			pid,status = os.waitpid(-1,os.WNOHANG)
 		
@@ -53,7 +57,3 @@ class forked:
 		while len(self.childlist) != 0:
 			os.kill(self.childlist[0],signal.SIGKILL)
 			signal.pause()
-	
-class threaded:
-	def __init__(self):
-		

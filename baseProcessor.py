@@ -1,24 +1,66 @@
 #!/usr/bin/python
 
-class baseProcessor:
-	def log(self,message,level)
-		if level == 0:
-			print message
-		self.logQueue.put((message,level))
+import os
+import os.path, re, time, socket
+
+codes = {
+100:"Continue",
+200:"OK",
+202:"Accepted",
+204:"No Content",
+400:"Bad Request",
+401:"Unauthorized",
+403:"Forbidden",
+404:"Not Found",
+405:"Method Not Allowed",
+406:"Not Acceptable",
+408:"Request Timeout",
+415:"Unsupported Media Type",
+500:"Internal Server Error",
+501:"Not Implemented",
+503:"Service Unavailable",
+505:"HTTP Version Not Supported"
+}
+
+def httpdate():
+	return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime())
 	
-	def readRequest(self,socket):
-		socket.settimeout(2)
+escapeSeq = re.compile(r"%(..)")
+def urlDecode(url):
+	def unescaper(match):
+		return chr( int(match.group(1),16) )
+	
+	return escapeSeq.sub(unescaper,url)
+
+class baseProcessor:
+	def __init__(self,logger):
+		self.logger = logger
+
+	reqRe = re.compile(r"^(\w+)\s+(\S+?)\s+HTTP/(\d.\d)\s*(.*)",
+										re.MULTILINE|re.DOTALL)
+	multilineHeader = re.compile(r",\s*$\s+",re.MULTILINE)
+	headerLineRe = re.compile(r"^(\S+?):\s*(.+)$")
+	headerValues = re.compile(r"\s*(\S+?)\s*(?:$|,)")
+
+
+	class Error(Exception):
+		"""Used to propogate any error condition in request parsing"""
+		
+	def readRequest(self):
+		self.sock.settimeout(2)
 		timeouts = 0
 		pieces = list()
 		while True:
 			try:
-				piece = socket.recv(128)
+				piece = self.sock.recv(128)
 			except socket.timeout:
 				timeouts += 1
 				if timeouts > 15:
-					return
-				continue
-			else:
+					self.code = 408		#error 408 - timeout
+					raise self.Error
+				else:
+					continue
+			else:				#if we get a successful recv, reset timeouts
 				timeouts = 0
 			
 			if len(piece) <= 3:			#if we get small pieces, we might miss
@@ -29,8 +71,86 @@ class baseProcessor:
 
 			if len(parts) > 1:		#if we had two parts, CRLFCRLF encountered
 				break
+			elif len(piece.split("\n\n")) > 1:	#also break on LFLF for robustness
+				break
 
-		socket.shutdown(socket.SHUT_RD)
-		request = "".join(pieces)
-		processRequest(request)
-					
+		self.sock.shutdown(socket.SHUT_RD)		#no more reading on the socket
+		self.request = "".join(pieces)
+	
+	def parseHeaders(self,headerstring):
+		self.multilineHeader.sub(',',headerstring)
+		headerlines = headerstring.lower().split('\n')
+		headers = dict()
+		
+		for line in headerlines:
+			match = self.headerLineRe.match(line)
+			if match:
+				header, values = match.groups()
+				headers[header] = self.headerValues.findall(values)
+				
+		return headers
+
+	def parseRequest(self):
+		match = self.reqRe.match(self.request)
+		if not match:
+			self.code = 400
+			raise self.Error
+
+		request = dict()
+		request['method'] = match.group(1).lower()
+		if request['method'] not in ('get','head'):
+			self.code = 501
+			raise self.Error
+			
+		request['uri'] = urlDecode(match.group(2))
+		request['headers'] = self.parseHeaders(match.group(4))
+		self.request = request
+	
+	def openResponse(self):
+		self.code = 200
+		self.request["content-type"] = 'text/html'
+		self.request["last-modified"] = httpdate()
+	
+	def sendResponseHeader(self):
+		header = "HTTP/1.0 %d %s\r\n" % (self.code, codes[self.code])
+		header += "Server: Ewe/1.0\r\n"
+		header += "Date: " + httpdate() + "\r\n"
+
+		if self.code == 200:
+			header += "Last-Modified: " + self.request["last-modified"] + "\r\n"
+			header += "Content-Type: " + self.request["content-type"] + "\r\n"
+
+		else:
+			header += "Content-Type: text/html\r\n"
+
+		header += "\r\n"
+		self.sock.sendall(header)
+
+	def sendError(self):
+		self.sendResponseHeader()
+		page = """
+		<html>
+		<head><title>Error</title></head>
+		<body>
+		<h1>%d - %s</h1>
+		<hr>
+		Ewe Server - version 1.0 - CMSC 33300
+		</body>
+		</html>""" % (self.code, codes[self.code])
+
+		self.sock.sendall(page)
+		self.sock.close()
+	
+	def sendResponse(self):
+		self.sendResponseHeader()
+		page = """
+		<html>
+		<head><title>The page!</title></head>
+		<body>
+		<h1>the page!</h1>
+		</body></html>"""
+
+		self.sock.sendall(page)
+		self.sock.close()
+		
+		

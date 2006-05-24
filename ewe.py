@@ -70,8 +70,15 @@ def serveRequests(processor):
 	sock.bind(('',config["port"]))
 	sock.listen(5)
 	while True:
-		con,address = sock.accept()
-		processor.process(con,address)
+		try:
+			con,address = sock.accept()
+			processor.process(con,address)
+		except socket.error, e:
+			if e[0] == 4:
+				print "Interrupted in accept - retrying"
+				continue
+			else:
+				raise
 	
 def main():
 	parseArguments()

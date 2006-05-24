@@ -9,13 +9,13 @@ config = {
 "port":4000,			#default port number
 
 "poolthreads":5, #if preforking, how many threads to create
-"indexes":False, 	#generate directory indexes?
+"indexes":True, 	#generate directory indexes?
 
 "loglevel":0,	#log verbosity (0 = no logfile, 3 = maximum logging)
 "logfile":"ewe.log", #where to put the log
 
 "defaultindex":"index.html",	#the default file to open in a directory
-"documentroot":"."				#the location of the / url
+"documentroot":"htdocs"				#the location of the / url
 }
 
 def parseArguments():
@@ -60,8 +60,8 @@ def initProcessor(logger):
 	processor = procTypes[config["concurrency"]](logger)
 	
 	processor.indexes = config["indexes"]
-	processor.defaultindex = os.path.abspath(config["defaultindex"])
-	processor.documentroot = config["documentroot"]
+	processor.defaultindex = config["defaultindex"]
+	processor.documentroot = os.path.abspath(config["documentroot"])
 
 	return processor
 	
@@ -74,6 +74,7 @@ def serveRequests(processor):
 		processor.process(con,address)
 	
 def main():
+	parseArguments()
 	try:
 		try:
 			logger = None

@@ -58,8 +58,9 @@ def urlDecode(url):
 	return escapeSeq.sub(unescaper,url)
 
 def genIndex(path,params,url):
-	reverse = False
 	key = 0
+	reverse = False
+	reversing = [0,0,0]
 	if params:
 		paramList = params.split('&')
 		for param in paramList:
@@ -69,22 +70,26 @@ def genIndex(path,params,url):
 				continue
 			if param == "key":
 				key = int(value)
-			if param == "cKey":
-				if value == key:	#if the currentKey=nextKey
-					reverse = True		#reverse
-	
+			if param == "reverse":
+				reverse = bool(int(value))
+				
 	listing = os.listdir(path)
+	
 	lines = list()
 	for file in listing:
 		if file[0] == '.': continue
-		stats = os.stat(file)
 		
-		line = list(file)
+		filepath = os.path.join(path,file)
+		stats = os.stat(filepath)
+		
+		line = [file]
 		line.append(stats.st_mtime)
-		if os.path.isdir(file):
+		if os.path.isdir(filepath):
 			line.append(None)
 		else:
 			line.append(stats.st_size)
+		lines.append(line)
+	
 	#sort using the schwartizan transform
 	#decorate:
 	dec = [(line[key],line) for line in lines]
@@ -94,32 +99,37 @@ def genIndex(path,params,url):
 	lines = [line for d,line in dec]
 	if reverse:
 		lines.reverse()
+	else:
+		reversing[key] = 1
 
 	#format the fields like they'll be displayed
 	postfixes = ['','KB','MB','GB','TB','PB','EB','ZB','YB']
 	for line in lines:
-		if not line[2]:		#directory
-			line[0] += '/'
-			line[2] = '-'
-		else:
+		line[1] = httpdate(line[1]) #convert date to http format
+		
+		if line[2] == None:		# if it was a directory, 
+			line[0] += '/'			#append /
+			line[2] = '-'			#replace size with '-'
+		elif line[2] < 1024:	# if size is less then 1K
+			line[2] = str(line[2])	#just convert it to a string
+		else:					# otherwise
 			postfix = 0
-			size = float(line[2])
+			size = float(line[2])	#format size properly
 			while size > 1024:
 				size /= 1024
 				postfix += 1
 			line[2] = "%.1f%s" % (size,postfixes[postfix])
-		line[1] = httpdate(line[1])
 	
 	title = "Index of " + url
 	cKey = str(key)
-	page = """<html>
-	<head><title>%s</title></head>
-	<body>
-		<h1>%s</h1><pre>
-<a href="?key=0&cKey=%s">Name</a>\t\t<a href="?key=1&cKey=%s">Last Modified</a>\t<a href="?key=2&cKey=%s>Size</a><hr>""" % (
-							title,title,cKey,cKey,cKey)
+	page = ('<html>\n\t<head><title>%s</title></head>\n\
+	\t<body>\n\t\t<h1>%s</h1>\n\
+	<pre><a href="?key=0&reverse=%d">Name</a>' + ' '*36 + 
+	'<a href="?key=1&reverse=%d">Last Modified</a>\t\t\t<a href="?key=2&reverse=%d">Size</a><hr>') % (
+							title,title,reversing[0],reversing[1],reversing[2])
 	for line in lines:
-		page += """<a href="%s">%s</a>\t\t%s\t%s\n""" % (line[0],line[0],line[1],line[2])
+		page += ("""<a href="%s">%s</a>""" + ' '*(40-len(line[0])) + 
+				"""%s\t%s\n""") % (line[0],line[0],line[1],line[2])
 	
 	page += "<hr></pre></body></html"
 	return page
@@ -175,7 +185,6 @@ class baseProcessor:
 
 		self.sock.shutdown(socket.SHUT_RD)		#no more reading on the socket
 		self.request = "".join(pieces)
-		print self.request
 
 	#parse the request headers into a dictionary
 	def parseHeaders(self,headerstring):
@@ -214,18 +223,19 @@ class baseProcessor:
 	def parseUrl(self):
 		url = self.request['url']
 		
+		#separate the url into the request and the query string
+		url,queryString = self.queryString.match(url).groups()
+		if queryString: 
+			queryString = queryString.lstrip('?')
+			self.request['url'] = url			#save the url w/o query
+		self.request["query"] = queryString		#save the query string
+		
 		match = self.schemeUrl.match(url) 
 		if match:	#if this url had a scheme
 			url = match.group(1)	#get rid of the scheme
 		match = self.hostUrl.match(url) 
 		if match: 					#if this url had a host
 			url = match.group(2)	#get rid of the host in the url
-			#self.request["host"] = match.group(1)  #save the host part
-		
-		#separate the url into the request and the query string
-		url,queryString = self.queryString.match(url).groups()
-		if queryString: queryString = queryString.lstrip('?')
-		self.request["query"] = queryString		#save the query string
 
 		#resolve the url as an absolute normalized path
 		self.request["path"] = os.path.normpath(self.documentroot + url)
@@ -244,6 +254,7 @@ class baseProcessor:
 			if os.path.exists(rfile): 	#if there is a default index there
 				rpath = rfile				#we return that
 			else:						#otherwise
+				print 'does not exist'
 				if not self.indexes:			#if we don't generate indexes
 					self.code = 403					#error 403
 					raise self.Error
@@ -328,4 +339,16 @@ class baseProcessor:
 
 		self.sock.close()
 		
-		
+	def serveRequest(self,sock,address):
+		self.sock = sock
+		self.peer = address
+
+		try:
+			self.readRequest()
+			self.parseRequest()
+			self.parseUrl()
+			self.openResponse()
+		except self.Error:
+			self.sendError()
+		else:
+			self.sendResponse()

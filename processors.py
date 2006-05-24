@@ -9,19 +9,8 @@ class basic(baseProcessor.baseProcessor):
 		baseProcessor.baseProcessor.__init__(self,logger)
 		
 	def process(self,sock,address):
-		self.sock = sock
-		self.peer = address
-		
-		try:
-			self.readRequest()
-			self.parseRequest()
-			self.parseUrl()
-			self.openResponse()
-		except self.Error:
-			self.sendError()
-		else:
-			self.sendResponse()
-		
+		self.serveRequest(sock,address)
+
 	def quit(self):
 		pass
 
@@ -46,7 +35,7 @@ class forked(baseProcessor.baseProcessor):
 		self.sigswap()
 		pid = os.fork()
 		if pid == 0:	#the child
-			basic.process(self,sock,address)
+			self.serveRequest(sock,address)
 			sys.exit(0)
 		
 		else:		#the parent

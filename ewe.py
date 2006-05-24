@@ -60,7 +60,7 @@ def initProcessor(logger):
 	processor = procTypes[config["concurrency"]](logger)
 	
 	processor.indexes = config["indexes"]
-	processor.defaultindex = config["defaultindex"]
+	processor.defaultindex = os.path.abspath(config["defaultindex"])
 	processor.documentroot = config["documentroot"]
 
 	return processor

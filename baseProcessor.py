@@ -8,6 +8,7 @@ codes = {
 200:"OK",
 202:"Accepted",
 204:"No Content",
+301:"Moved Permanently",
 400:"Bad Request",
 401:"Unauthorized",
 403:"Forbidden",
@@ -121,7 +122,6 @@ def genIndex(path,params,url):
 			line[2] = "%.1f%s" % (size,postfixes[postfix])
 	
 	title = "Index of " + url
-	cKey = str(key)
 	page = ('<html>\n\t<head><title>%s</title></head>\n\
 	\t<body>\n\t\t<h1>%s</h1>\n\
 	<pre><a href="?key=0&reverse=%d">Name</a>' + ' '*36 + 
@@ -238,29 +238,34 @@ class baseProcessor:
 			url = match.group(2)	#get rid of the host in the url
 
 		#resolve the url as an absolute normalized path
-		self.request["path"] = os.path.normpath(self.documentroot + url)
+		self.request['path'] = os.path.normpath(self.documentroot + url)
 
 	#try to open the response file
 	def openResponse(self):
 		root = self.documentroot
-		rpath = self.request["path"]
-		
+		rpath = self.request['path']
+
 		if os.path.commonprefix((root,rpath)) != root:
 			self.code = 403		#attempted to request above document root
 			raise self.Error
 
 		if os.path.isdir(rpath): #if the request is a directory
+			if self.request['url'][-1] != '/': 	#if the url didn't come with a trailing slash:
+				self.code = 301						#redirect
+				loc = "http://" + self.request['headers']['host'][0] + self.request['url'] + '/'
+				self.responseHeaders.append("Location: " + loc + "\r\n")
+				raise self.Error
+
 			rfile = os.path.join(rpath,self.defaultindex)
 			if os.path.exists(rfile): 	#if there is a default index there
 				rpath = rfile				#we return that
 			else:						#otherwise
-				print 'does not exist'
 				if not self.indexes:			#if we don't generate indexes
 					self.code = 403					#error 403
 					raise self.Error
 				else:							#if we do generate indexes
 					try:
-						self.request['response'] = genIndex(rpath,self.request['query'],self.request['url'])
+						self.entity = genIndex(rpath,self.request['query'],self.request['url'])
 					except IOError, err:
 						errno = err[0]
 						if errno == 2:		#no such file
@@ -272,8 +277,8 @@ class baseProcessor:
 						raise self.Error
 					else:
 						self.code = 200	
-						self.request['content-type'] = 'text/html'
-						self.request['last-modified'] = httpdate(time.time())
+						self.responseHeaders.append("Content-Type: text/html\r\n")
+						self.responseHeaders.append("Last-Modified: " + httpdate(time.time()) + "\r\n")
 						return
 		
 		#if we got this far, rpath is a file request
@@ -291,26 +296,21 @@ class baseProcessor:
 		
 		#we could open the file for reading, so everything is OK
 		self.code = 200
-		self.request['response'] = rfile
-		self.request['content-type'] = types[os.path.splitext(rpath)[1]]
-		self.request['last-modified'] = httpdate(os.stat(rpath).st_mtime)
+		self.entity = rfile
+		self.responseHeaders.append("Content-Type: " + gettype(rpath) + "\r\n")
+		self.responseHeaders.append("Last-Modified: " + httpdate(os.stat(rpath).st_mtime) + "\r\n")
 	
 	def sendResponseHeader(self):
-		header = "HTTP/1.0 %d %s\r\n" % (self.code, codes[self.code])
-		header += "Server: Ewe/1.0\r\n"
-		header += "Date: " + httpdate(time.time()) + "\r\n"
+		headers = ["HTTP/1.0 %d %s\r\n" % (self.code, codes[self.code])]
+		headers.append("Date: " + httpdate(time.time()) + "\r\n")
+	
+		headers.extend(self.responseHeaders)
+		headers.append("\r\n")
 
-		if self.code == 200:
-			header += "Last-Modified: " + self.request["last-modified"] + "\r\n"
-			header += "Content-Type: " + self.request["content-type"] + "\r\n"
-
-		else:
-			header += "Content-Type: text/html\r\n"
-
-		header += "\r\n"
-		self.sock.sendall(header)
+		self.sock.sendall("".join(headers))
 
 	def sendError(self):
+		self.responseHeaders.append("Content-type: text/html\r\n")
 		self.sendResponseHeader()
 		page = """
 		<html>
@@ -327,7 +327,7 @@ class baseProcessor:
 	
 	def sendResponse(self):
 		self.sendResponseHeader()
-		response = self.request['response']
+		response = self.entity
 		if type(response) == type(str()):	#its a string - probably the directory index
 			self.sock.sendall(response)
 		else:							#its an open file - read in chunks
@@ -342,6 +342,9 @@ class baseProcessor:
 	def serveRequest(self,sock,address):
 		self.sock = sock
 		self.peer = address
+		self.request = None
+		self.responseHeaders = ["Server: Ewe/1.0\r\n"]
+		self.entity = None
 
 		try:
 			self.readRequest()

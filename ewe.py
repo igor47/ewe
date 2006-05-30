@@ -53,32 +53,26 @@ def buildLogger():
 	return logThread
 	
 def initProcessor(logger):
-	
-	procTypes = {"none":processors.basic,
-				"forked":processors.forked
-				}
-	processor = procTypes[config["concurrency"]](logger)
-	
-	processor.indexes = config["indexes"]
-	processor.defaultindex = config["defaultindex"]
-	processor.documentroot = os.path.abspath(config["documentroot"])
 
-	return processor
+	procTypes = {"none":processors.basic,
+				"forked":processors.forked,
+				"threaded":processors.threaded,
+				"threadpool":processors.threadpool
+				}
+	processor = procTypes[config["concurrency"]](logger,
+										config['indexes'],
+									config['defaultindex'],
+							os.path.abspath(config['documentroot']))
 	
+	return processor
+
 def serveRequests(processor):
 	sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 	sock.bind(('',config["port"]))
 	sock.listen(5)
 	while True:
-		try:
-			con,address = sock.accept()
-			processor.process(con,address)
-		except socket.error, e:
-			if e[0] == 4:
-				print "Interrupted in accept - retrying"
-				continue
-			else:
-				raise
+		con,address = sock.accept()
+		processor.process(con,address)
 	
 def main():
 	parseArguments()

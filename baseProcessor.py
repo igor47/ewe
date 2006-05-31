@@ -2,142 +2,18 @@
 
 import os
 import os.path, re, time, socket
-
-codes = {
-100:"Continue",
-200:"OK",
-202:"Accepted",
-204:"No Content",
-301:"Moved Permanently",
-400:"Bad Request",
-401:"Unauthorized",
-403:"Forbidden",
-404:"Not Found",
-405:"Method Not Allowed",
-406:"Not Acceptable",
-408:"Request Timeout",
-415:"Unsupported Media Type",
-500:"Internal Server Error",
-501:"Not Implemented",
-503:"Service Unavailable",
-505:"HTTP Version Not Supported"
-}
-
-types = {
-".gif":"image/gif",
-".jpeg":"image/jpeg",
-".jpg":"image/jpeg",
-".png":"image/png",
-".tiff":"image/tiff",
-".tff":"image/tiff",
-".txt":"text/plain",
-".log":"text/plain",
-".htm":"text/html",
-".html":"text/html",
-".py":"text/plain"
-}
-
-#accepts time in seconds since the epoch, returns date in rfc822
-def httpdate(rtime):
-	return time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(rtime))
-
-#accepts filename, returns mime type based on extention, or
-#application/octet-stream if type cannot be determined
-def gettype(rpath):
-	ext = os.path.splitext(rpath)[1]
-	try:
-		return types[ext]
-	except KeyError:
-		return 'application/octet-stream'
-		
-#accepts url, returns url with all the % characters decoded into ascii
-escapeSeq = re.compile(r"%(..)")
-def urlDecode(url):
-	def unescaper(match):
-		return chr( int(match.group(1),16) )
-	
-	return escapeSeq.sub(unescaper,url)
-
-def genIndex(path,params,url):
-	key = 0
-	reverse = False
-	reversing = [0,0,0]
-	if params:
-		paramList = params.split('&')
-		for param in paramList:
-			try:
-				param,value = param.split('=')
-			except ValueError:
-				continue
-			if param == "key":
-				key = int(value)
-			if param == "reverse":
-				reverse = bool(int(value))
-				
-	listing = os.listdir(path)
-	
-	lines = list()
-	for file in listing:
-		if file[0] == '.': continue
-		
-		filepath = os.path.join(path,file)
-		stats = os.stat(filepath)
-		
-		line = [file]
-		line.append(stats.st_mtime)
-		if os.path.isdir(filepath):
-			line.append(None)
-		else:
-			line.append(stats.st_size)
-		lines.append(line)
-	
-	#sort using the schwartizan transform
-	#decorate:
-	dec = [(line[key],line) for line in lines]
-	#sort
-	dec.sort()
-	#undecorate
-	lines = [line for d,line in dec]
-	if reverse:
-		lines.reverse()
-	else:
-		reversing[key] = 1
-
-	#format the fields like they'll be displayed
-	postfixes = ['','KB','MB','GB','TB','PB','EB','ZB','YB']
-	for line in lines:
-		line[1] = httpdate(line[1]) #convert date to http format
-		
-		if line[2] == None:		# if it was a directory, 
-			line[0] += '/'			#append /
-			line[2] = '-'			#replace size with '-'
-		elif line[2] < 1024:	# if size is less then 1K
-			line[2] = str(line[2])	#just convert it to a string
-		else:					# otherwise
-			postfix = 0
-			size = float(line[2])	#format size properly
-			while size > 1024:
-				size /= 1024
-				postfix += 1
-			line[2] = "%.1f%s" % (size,postfixes[postfix])
-	
-	title = "Index of " + url
-	page = ('<html>\n\t<head><title>%s</title></head>\n\
-	\t<body>\n\t\t<h1>%s</h1>\n\
-	<pre><a href="?key=0&reverse=%d">Name</a>' + ' '*36 + 
-	'<a href="?key=1&reverse=%d">Last Modified</a>\t\t\t<a href="?key=2&reverse=%d">Size</a><hr>') % (
-							title,title,reversing[0],reversing[1],reversing[2])
-	for line in lines:
-		page += ("""<a href="%s">%s</a>""" + ' '*(40-len(line[0])) + 
-				"""%s\t%s\n""") % (line[0],line[0],line[1],line[2])
-	
-	page += "<hr></pre></body></html"
-	return page
+from features import *
 
 #the main shebang!
 class baseProcessor:
-	def __init__(self,logger):
+	def __init__(self,logger,config):
 		self.logger = logger
+		self.indexes = config['indexes']
+		self.defaultindex = config['defaultindex']
+		self.documentroot = config['documentroot']
+		self.cgipath = config['cgipath']
+
+		self.persistence = config['persistent']
 
 	#some regular expressions used in parsing requests
 	reqRe = re.compile(r"^(\w+)\s+(\S+?)\s+HTTP/(\d.\d)\s*(.*)",
@@ -156,39 +32,42 @@ class baseProcessor:
 		
 	#reads the request and returns a string with the request in it
 	def readRequest(self):
-		self.sock.settimeout(2)
-		timeouts = 0
-		pieces = list()
-		while True:
-			try:
-				piece = self.sock.recv(128)
-			except socket.timeout:
-				timeouts += 1
-				if timeouts > 15:
-					self.code = 408		#error 408 - timeout
-					raise self.Error
-				else:
-					continue
-			else:				#if we get a successful recv, reset timeouts
-				timeouts = 0
-			
-			if len(piece) <= 3:			#if we get small pieces, we might miss
-				piece = pieces.pop(-1) + piece	#the CRLFCRLF
+		self.sock.settimeout(10)
+		request = list()			#list to hold request chunks
 	
-			parts = piece.split("\r\n\r\n")	#break the string up on CRLFCRLF
-			pieces.append(parts[0])			#the part before goes in the list
+		while True:					#looping to get a single request
+			try:
+				line = list()
+				while True:
+					c = self.sock.recv(1)
+					line.append(c)
+					if c == '\n': break
+			except socket.timeout:	#if we have a timeout
+				if self.persistent:		#if we had a persistent connection
+					self.persistent = False	#make it unpersistent
+					#if we haven't gotten any data, we can just close the connection
+					if len(request) == 0 and len(line) == 0:	
+						self.sock.close()
+						raise socket.timeout				#reraise the timeout so that processor knows
 
-			if len(parts) > 1:		#if we had two parts, CRLFCRLF encountered
-				break
-			elif len(piece.split("\n\n")) > 1:	#also break on LFLF for robustness
-				break
+				#if the connection is not persistent or we we read some data in this request
+				self.code = 408			#send error 408
+				self.persistent = False
+				raise self.Error
 
-		self.sock.shutdown(socket.SHUT_RD)		#no more reading on the socket
-		self.request = "".join(pieces)
+			if line == ['\n'] or line == ['\r','\n']:
+				break
+			else:
+				request += line
+		
+		self.sock.settimeout(None)
+		request = "".join(request)
+		self.request = request
 
 	#parse the request headers into a dictionary
 	def parseHeaders(self,headerstring):
-		self.multilineHeader.sub(',',headerstring)
+		self.multilineHeader.sub(',',headerstring)	#put all headers spanning 
+													#multiple lines on one line
 		headerlines = headerstring.lower().split('\n')
 		headers = dict()
 		
@@ -196,7 +75,8 @@ class baseProcessor:
 			match = self.headerLineRe.match(line)
 			if match:
 				header, values = match.groups()
-				if header == "if-modified-since":
+				if header == "if-modified-since" or header == "date" \
+									or header == "if-unmodified-since":
 					headers[header] = values
 				else:
 					headers[header] = self.headerValues.findall(values)
@@ -211,15 +91,30 @@ class baseProcessor:
 
 		request = dict()
 		request['method'] = match.group(1).lower()
+		request['url'] = urlDecode(match.group(2))
+		request['version'] = match.group(3)
+		request['headers'] = self.parseHeaders(match.group(4))
+
 		if request['method'] not in ('get','head'):
 			self.code = 501
 			raise self.Error
 			
-		request['url'] = urlDecode(match.group(2))
-		request['headers'] = self.parseHeaders(match.group(4))
+		if request['version'] == "1.0":
+			self.persistent = False
+		else:
+			if not 'host' in request['headers'].keys():
+				self.code = 400				#bad request
+				raise self.Error
+		
+		try:
+			if request['headers']['connection'] == 'close':	#if the client wants to close
+				self.persistent = False					#don't serve any more requests
+		except KeyError:
+			pass
+			
 		self.request = request
 	
-	#parse the url into an absolute path
+	#parse the url into its constituent parts
 	def parseUrl(self):
 		url = self.request['url']
 		
@@ -237,54 +132,67 @@ class baseProcessor:
 		if match: 					#if this url had a host
 			url = match.group(2)	#get rid of the host in the url
 
-		#resolve the url as an absolute normalized path
-		self.request['path'] = os.path.normpath(self.documentroot + url)
-
 	#try to open the response file
 	def openResponse(self):
-		root = self.documentroot
-		rpath = self.request['path']
-
-		if os.path.commonprefix((root,rpath)) != root:
-			self.code = 403		#attempted to request above document root
-			raise self.Error
-
-		if os.path.isdir(rpath): #if the request is a directory
-			if self.request['url'][-1] != '/': 	#if the url didn't come with a trailing slash:
-				self.code = 301						#redirect
-				loc = "http://" + self.request['headers']['host'][0] + self.request['url'] + '/'
-				self.responseHeaders.append("Location: " + loc + "\r\n")
-				raise self.Error
-
-			rfile = os.path.join(rpath,self.defaultindex)
-			if os.path.exists(rfile): 	#if there is a default index there
-				rpath = rfile				#we return that
-			else:						#otherwise
-				if not self.indexes:			#if we don't generate indexes
-					self.code = 403					#error 403
-					raise self.Error
-				else:							#if we do generate indexes
-					try:
-						self.entity = genIndex(rpath,self.request['query'],self.request['url'])
-					except IOError, err:
-						errno = err[0]
-						if errno == 2:		#no such file
-							self.code = 404
-						elif errno == 13:	#permission denied
-							self.code = 403
-						else:				#some other error - raise 500
-							self.code = 500
-						raise self.Error
-					else:
-						self.code = 200	
-						self.responseHeaders.append("Content-Type: text/html\r\n")
-						self.responseHeaders.append("Last-Modified: " + httpdate(time.time()) + "\r\n")
-						return
-		
-		#if we got this far, rpath is a file request
 		try:
+			#first, check if this is a cgi request
+			url = self.request['url']
+			if url.startswith('/cgi-bin/'):
+				self.entity = runCgi(self.request)
+			
+				#everything went ok
+				self.code = 200
+				self.request['isCgi'] = True
+				self.persistent = False		#since we can't determine content-legnth
+				return						#just close the connection
+			
+			#it wasn't a cgi request - process normally
+			self.request['isCgi'] = False
+			rpath = os.path.normpath(self.documentroot + url)
+	
+			if os.path.commonprefix((self.documentroot,rpath)) != self.documentroot:
+				self.code = 403		#attempted to request above document root
+				raise self.Error
+	
+			else:
+				self.request['isCgi'] = False
+	
+			if os.path.isdir(rpath): 	#if the request is a directory
+				if self.request['url'][-1] != '/': 	#if the url didn't come with a trailing slash:
+					self.code = 301						#redirect
+					loc = "http://" + self.request['headers']['host'][0] + self.request['url'] + '/'
+					self.responseHeaders.append("Location: " + loc + "\r\n")
+					raise self.Error
+	
+				rfile = os.path.join(rpath,self.defaultindex)
+				if os.path.exists(rfile): 	#if there is a default index there
+					rpath = rfile				#we return that
+					
+				else:						#otherwise
+					if not self.indexes:			#if we don't generate indexes
+						self.code = 403					#error 403
+						raise self.Error
+					else:							#if we do generate indexes
+						self.entity = genIndex(rpath,self.request['query'],self.request['url'])
+						stats = os.stat(rpath)
+						self.code = 200
+						self.responseHeaders.append("Content-Type: text/html\r\n")
+						self.responseHeaders.append("Last-Modified: " + httpdate(stats.st_mtime) + "\r\n")
+						self.responseHeaders.append("Content-Length: %d\r\n" % (len(self.entity)))
+						return
+			
+			#if we got this far, rpath is a file request
 			rfile = open(rpath)
-		except IOError, err:
+			stats = os.stat(rpath)
+					
+			#we could open the file for reading, so everything is OK
+			self.code = 200
+			self.entity = rfile
+			self.responseHeaders.append("Content-Type: " + gettype(rpath) + "\r\n")
+			self.responseHeaders.append("Last-Modified: " + httpdate(stats.st_mtime) + "\r\n")
+			self.responseHeaders.append("Content-Length: " + str(stats.st_size) + "\r\n")
+
+		except IOError, err:	#this catches any IOError in this function
 			errno = err[0]
 			if errno == 2:		#no such file
 				self.code = 404
@@ -293,25 +201,22 @@ class baseProcessor:
 			else:				#some other error - raise 500
 				self.code = 500
 			raise self.Error
-		
-		#we could open the file for reading, so everything is OK
-		self.code = 200
-		self.entity = rfile
-		self.responseHeaders.append("Content-Type: " + gettype(rpath) + "\r\n")
-		self.responseHeaders.append("Last-Modified: " + httpdate(os.stat(rpath).st_mtime) + "\r\n")
-	
+
 	def sendResponseHeader(self):
-		headers = ["HTTP/1.0 %d %s\r\n" % (self.code, codes[self.code])]
+		headers = ["HTTP/1.1 %d %s\r\n" % (self.code, codes[self.code])]
 		headers.append("Date: " + httpdate(time.time()) + "\r\n")
-	
+		
+		if not self.persistent and self.request['version'] == '1.1':
+			headers.append("Connection: close\r\n")
+
 		headers.extend(self.responseHeaders)
-		headers.append("\r\n")
+		if not self.request['isCgi']:		#don't send the blank line if cgi
+			headers.append("\r\n")
 
 		self.sock.sendall("".join(headers))
 
 	def sendError(self):
-		self.responseHeaders.append("Content-type: text/html\r\n")
-		self.sendResponseHeader()
+		print "error - ", self.request['url']
 		page = """
 		<html>
 		<head><title>Error</title></head>
@@ -322,12 +227,21 @@ class baseProcessor:
 		</body>
 		</html>""" % (self.code, codes[self.code])
 
+		self.request['isCgi'] = False	#need this in header-sender
+		self.responseHeaders.append("Content-type: text/html\r\n")
+		self.responseHeaders.append("Content-length: %d\r\n" % (len(page)))
+		self.sendResponseHeader()
 		self.sock.sendall(page)
-		self.sock.close()
 	
 	def sendResponse(self):
 		self.sendResponseHeader()
 		response = self.entity
+		
+		if self.request['method'] == 'head':
+			try: response.close()	
+			except: pass
+			return
+			
 		if type(response) == type(str()):	#its a string - probably the directory index
 			self.sock.sendall(response)
 		else:							#its an open file - read in chunks
@@ -337,21 +251,34 @@ class baseProcessor:
 				chunk = response.read(32768)
 			response.close()
 
-		self.sock.close()
-		
 	def serveRequest(self,sock,address):
-		self.sock = sock
-		self.peer = address
-		self.request = None
-		self.responseHeaders = ["Server: Ewe/1.0\r\n"]
-		self.entity = None
+		print "new socket"
+		self.persistent = self.persistence
 
 		try:
-			self.readRequest()
-			self.parseRequest()
-			self.parseUrl()
-			self.openResponse()
-		except self.Error:
-			self.sendError()
-		else:
-			self.sendResponse()
+			while True:
+				self.sock = sock
+				self.peer = address
+				self.request = None
+				self.responseHeaders = ["Server: Ewe/1.1\r\n"]
+				self.entity = None
+
+				try:
+					try:
+						self.readRequest()
+					except socket.timeout:	#this means persistent connection closed
+						return
+					self.parseRequest()
+					print 'url is ', self.request['url']
+					self.parseUrl()
+					self.openResponse()
+				except self.Error:
+					self.sendError()
+				else:
+					self.sendResponse()
+
+				if not self.persistent:
+					self.sock.close()
+					break
+		except socket.error, e:
+			print "Error communicating with ", address, ": ", e

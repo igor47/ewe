@@ -5,11 +5,8 @@ import signal,threading,Queue
 import baseProcessor
 
 class basic(baseProcessor.baseProcessor):
-	def __init__(self,logger,indexes,defaultindex,documentroot):
-		baseProcessor.baseProcessor.__init__(self,logger)
-		self.indexes = indexes
-		self.defaultindex = defaultindex
-		self.documentroot = documentroot
+	def __init__(self,logger,config):
+		baseProcessor.baseProcessor.__init__(self,logger,config)
 		
 	def process(self,sock,address):
 		self.serveRequest(sock,address)
@@ -18,11 +15,8 @@ class basic(baseProcessor.baseProcessor):
 		pass
 
 class forked(baseProcessor.baseProcessor):
-	def __init__(self,logger,indexes,defaultindex,documentroot):
-		baseProcessor.baseProcessor.__init__(self,logger)
-		self.indexes = indexes
-		self.defaultindex = defaultindex
-		self.documentroot = documentroot
+	def __init__(self,logger,config):
+		baseProcessor.baseProcessor.__init__(self,logger,config)
 	
 		self.childlist = list()
 		self.ischild = False
@@ -57,12 +51,10 @@ class forked(baseProcessor.baseProcessor):
 			self.reaper()
 
 class threaded:
-	def __init__(self,logger,indexes,defaultindex,documentroot):
+	def __init__(self,logger,config):
 		self.logger = logger
-		self.indexes = indexes
-		self.defaultindex = defaultindex
-		self.documentroot = documentroot
-		
+		self.config = config
+
 		self.threadList = list()
 		self.mutex = threading.Lock()
 	
@@ -72,10 +64,7 @@ class threaded:
 		thread.start()
 	
 	def runThread(self,sock,address):
-		processor = baseProcessor.baseProcessor(self.logger)
-		processor.indexes = self.indexes
-		processor.defaultindex = self.defaultindex
-		processor.documentroot = self.documentroot
+		processor = baseProcessor.baseProcessor(self.logger, self.config)
 
 		me = threading.currentThread().getName()
 		self.mutex.acquire()
@@ -100,20 +89,15 @@ class threaded:
 			print "Warning:", left, " threads are still running"
 
 class threadpool:
-	def __init__(self,logger,indexes,defaultindex,documentroot,threads=5):
+	def __init__(self,logger,config):
 		self.logger = logger
-		self.indexes = indexes
-		self.defaultindex = defaultindex
-		self.documentroot = documentroot
-		self.threads = threads
+		self.config = config
+		self.threads = config["poolthreads"]
 		
-		self.queue = Queue.Queue(threads)
+		self.queue = Queue.Queue(self.threads)
 		
 		for i in xrange(threads):
-			worker = poolThread(logger,self.queue)
-			worker.indexes = self.indexes
-			worker.defaultindex = self.defaultindex
-			worker.documentroot = self.documentroot
+			worker = poolThread(logger,config,self.queue)
 
 			thread = threading.Thread(target=worker.listen)
 			thread.start()
@@ -145,8 +129,8 @@ class threadpool:
 			self.queue.put(None)
 			
 class poolThread(baseProcessor.baseProcessor):
-	def __init__(self,logger,queue):
-		baseProcessor.baseProcessor.__init__(self,logger)
+	def __init__(self,logger,config,queue):
+		baseProcessor.baseProcessor.__init__(self,logger,config)
 		self.queue = queue
 	
 	def listen(self):

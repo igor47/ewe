@@ -10,12 +10,14 @@ config = {
 
 "poolthreads":5, #if preforking, how many threads to create
 "indexes":True, 	#generate directory indexes?
+"persistent":True,
 
 "loglevel":0,	#log verbosity (0 = no logfile, 3 = maximum logging)
 "logfile":"ewe.log", #where to put the log
 
 "defaultindex":"index.html",	#the default file to open in a directory
-"documentroot":"htdocs"				#the location of the / url
+"documentroot":"htdocs",			#the location of the / url
+"cgipath":"cgi-bin"					#location of cgi-bin directory
 }
 
 def parseArguments():
@@ -54,15 +56,19 @@ def buildLogger():
 	
 def initProcessor(logger):
 
+	#make sure configfile has proper values
+	config['documentroot'] = os.path.abspath(config['documentroot'])
+	config['cgipath'] = os.path.abspath(config['cgipath'])
+
+	#mapping of processor types to classes
 	procTypes = {"none":processors.basic,
 				"forked":processors.forked,
 				"threaded":processors.threaded,
 				"threadpool":processors.threadpool
 				}
-	processor = procTypes[config["concurrency"]](logger,
-										config['indexes'],
-									config['defaultindex'],
-							os.path.abspath(config['documentroot']))
+
+	#make the processor
+	processor = procTypes[config["concurrency"]](logger,config)
 	
 	return processor
 

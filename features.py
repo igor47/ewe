@@ -152,6 +152,9 @@ def genIndex(path,params,url):
 	page += "<hr></pre></body></html"
 	return page
 
+class cgiError(Exception):
+	"""Used to signal cgi errors - DUH!"""
+
 def buildEnviron(request,sock):
 	environ = dict()
 
@@ -184,10 +187,13 @@ def runCgi(path,request,sock):
 
 	#check method
 	if request['method'] == 'post':
-		bodyLen = request['headers']['content-length']
-		environ['CONTENT_LENGTH'] = str(bodyLen)
-		contType = request['headers']['content-type']
-		environ['CONTENT_TYPE'] = str(contType)
+		try:
+			bodyLen = int(request['headers']['content-length'][0])
+			environ['CONTENT_LENGTH'] = str(bodyLen)
+			contType = request['headers']['content-type']
+			environ['CONTENT_TYPE'] = str(contType)
+		except:
+			raise cgiError
 	
 		read = 0
 		body = list()
@@ -209,11 +215,11 @@ def runCgi(path,request,sock):
 			sock.close()
 
 			os.close(toChild[1])		#close the write end
-			os.dup2(toChild[0],0)	#dup
+			os.dup2(toChild[0],0)		#dup
 		
 			os.close(fromChild[0])		#close the read end
-			os.dup2(fromChild[1],1)	#dup
-
+			os.dup2(fromChild[1],1)		#dup
+			
 			os.execve(path,argv,environ)	#exec
 		except:				#if anything goes wrong
 			print "Content-type: text/html\r\n\r\n"
@@ -236,6 +242,16 @@ def runCgi(path,request,sock):
 	entity = fromChild.read()
 	fromChild.close()
 	os.waitpid(pid,0)
-	return entity
 
-		
+	try:
+		headers,body = entity.split('\r\n\r\n',1)
+	except ValueError:
+		try:
+			headers,body = entity.split('\n\n',1)
+		except ValueError:
+			raise cgiError			#there were no headers in the script
+
+	headers += '\r\n'		#we need to add the CRLF after the last header back
+	if not "content-length" in headers.lower():
+		headers += "Content-length: %d\r\n" % ( len(body) )
+	return headers,body

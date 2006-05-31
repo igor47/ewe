@@ -146,32 +146,27 @@ class baseProcessor:
 				if os.path.isfile(path):		#if it is a file
 					if os.access(path,os.X_OK):		#if executable
 						try:
-							self.entity = runCgi(path,self.request,self.sock)
-						except:
+							headers,self.entity = runCgi(path,self.request,self.sock)
+						except cgiError:
 							self.code = 500			#any problems result in 500
 							self.persistent = False	#can't recover since there
 							raise self.Error		#	might be POST data
 						#everything went ok
-						self.code = 200			
-						self.request['isCgi'] = True
-						self.persistent = False		#since we can't determine content-legnth
-						return						#just close the connection
+						self.code = 200
+						self.responseHeaders.append(headers)
+						return
 			
 			#if it wasn't an executable file, just process normally
-			self.request['isCgi'] = False
 			if self.request['method'] == 'post': #only CGI accepts the post method
 				self.code = 405
 				self.responseHeaders.append("Allow: GET, HEAD\r\n")
 				self.presistent = False			#we cannot persist since there
 				raise self.Error				#	might be POST data waiting
-				
-			rpath = os.path.normpath(self.documentroot + url)
+			
+			rpath = os.path.normpath(self.documentroot + '/' + url)
 			if os.path.commonprefix((self.documentroot,rpath)) != self.documentroot:
 				self.code = 403		#attempted to request above document root
 				raise self.Error
-	
-			else:
-				self.request['isCgi'] = False
 	
 			if os.path.isdir(rpath): 	#if the request is a directory
 				if self.request['url'][-1] != '/': 	#if the url didn't come with a trailing slash:
@@ -226,13 +221,11 @@ class baseProcessor:
 			headers.append("Connection: close\r\n")
 
 		headers.extend(self.responseHeaders)
-		if not self.request['isCgi']:		#don't send the blank line if cgi
-			headers.append("\r\n")
+		headers.append("\r\n")
 
 		self.sock.sendall("".join(headers))
 
 	def sendError(self):
-		print "error - ", self.request['url']
 		page = """
 		<html>
 		<head><title>Error</title></head>
@@ -243,7 +236,6 @@ class baseProcessor:
 		</body>
 		</html>""" % (self.code, codes[self.code])
 
-		self.request['isCgi'] = False	#need this in header-sender
 		self.responseHeaders.append("Content-type: text/html\r\n")
 		self.responseHeaders.append("Content-length: %d\r\n" % (len(page)))
 		self.sendResponseHeader()
@@ -270,15 +262,14 @@ class baseProcessor:
 			response.close()
 
 	def serveRequest(self,sock,address):
-		print "new socket"
 		self.persistent = self.persistence
+		self.sock = sock
+		self.peer = address
 
 		try:
 			while True:
-				self.sock = sock
-				self.peer = address
-				self.request = None
-				self.responseHeaders = ["Server: Ewe/1.1\r\n"]
+				self.request = None		#reset reusable values
+				self.responseHeaders = ["Server: Ewe/1.0\r\n"]
 				self.entity = None
 
 				try:
@@ -287,7 +278,6 @@ class baseProcessor:
 					except socket.timeout:	#this means persistent connection closed
 						return
 					self.parseRequest()
-					print 'url is ', self.request['url']
 					self.parseUrl()
 					self.openResponse()
 				except self.Error:

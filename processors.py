@@ -96,9 +96,8 @@ class threadpool:
 		
 		self.queue = Queue.Queue(self.threads)
 		
-		for i in xrange(threads):
+		for i in xrange(self.threads):
 			worker = poolThread(logger,config,self.queue)
-
 			thread = threading.Thread(target=worker.listen)
 			thread.start()
 	

@@ -41,9 +41,13 @@ def parseArguments():
 					config["concurrency"] = "threadpool"
 			else:
 				try:
-					config["port"] = int(arg)
+					port = int(arg)
 				except ValueError:
 					raise optionError, "Invalid argument " + arg
+				if port < 1 or port > 65535:
+						raise optionError, "Invalid port number: %d" % (port)
+				config["port"] = int(arg)
+
 	except optionError, e:
 		print "Error parsing arguments:", e
 		print "Syntax: %s [-f|-t|-p] [port]" % (sys.argv[0])

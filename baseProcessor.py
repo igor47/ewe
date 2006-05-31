@@ -95,7 +95,7 @@ class baseProcessor:
 		request['version'] = match.group(3)
 		request['headers'] = self.parseHeaders(match.group(4))
 
-		if request['method'] not in ('get','head'):
+		if request['method'] not in ('get','head','post'):
 			self.code = 501
 			raise self.Error
 			
@@ -137,19 +137,35 @@ class baseProcessor:
 		try:
 			#first, check if this is a cgi request
 			url = self.request['url']
-			if url.startswith('/cgi-bin/'):
-				self.entity = runCgi(self.request)
+			if url.startswith('/cgi-bin'):  #if its in the cgi directory
+				path = self.cgipath + '/' + url.replace('/cgi-bin','',1)
+				path = os.path.normpath(path)
+				if not os.path.exists(path):	#if it doesn't exist, 
+					self.code = 404					#404 error
+					raise self.Error
+				if os.path.isfile(path):		#if it is a file
+					if os.access(path,os.X_OK):		#if executable
+						try:
+							self.entity = runCgi(path,self.request,self.sock)
+						except:
+							self.code = 500			#any problems result in 500
+							self.persistent = False	#can't recover since there
+							raise self.Error		#	might be POST data
+						#everything went ok
+						self.code = 200			
+						self.request['isCgi'] = True
+						self.persistent = False		#since we can't determine content-legnth
+						return						#just close the connection
 			
-				#everything went ok
-				self.code = 200
-				self.request['isCgi'] = True
-				self.persistent = False		#since we can't determine content-legnth
-				return						#just close the connection
-			
-			#it wasn't a cgi request - process normally
+			#if it wasn't an executable file, just process normally
 			self.request['isCgi'] = False
+			if self.request['method'] == 'post': #only CGI accepts the post method
+				self.code = 405
+				self.responseHeaders.append("Allow: GET, HEAD\r\n")
+				self.presistent = False			#we cannot persist since there
+				raise self.Error				#	might be POST data waiting
+				
 			rpath = os.path.normpath(self.documentroot + url)
-	
 			if os.path.commonprefix((self.documentroot,rpath)) != self.documentroot:
 				self.code = 403		#attempted to request above document root
 				raise self.Error
@@ -231,7 +247,9 @@ class baseProcessor:
 		self.responseHeaders.append("Content-type: text/html\r\n")
 		self.responseHeaders.append("Content-length: %d\r\n" % (len(page)))
 		self.sendResponseHeader()
-		self.sock.sendall(page)
+		
+		if self.request['method'] == 'head': return		#don't send the page for GET
+		else: self.sock.sendall(page)
 	
 	def sendResponse(self):
 		self.sendResponseHeader()

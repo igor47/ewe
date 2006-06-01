@@ -95,7 +95,6 @@ This feature can be deactivated by the `indexes' option (see section \ref{config
 \subsection{Persistence}
 EWE supports persistent connections.
 With this feature enabled, EWE can reuse a single TCP connection with a client for several transactions.
-The performance benefits of this feature are discussed in section \ref{perstPerf}.
 The feature can be enabled and disabled as per section \ref{config}.
 
 \subsection{CGI}\label{cgi}
@@ -220,10 +219,16 @@ Thus, while EWE can fork processes almost indefinitely, it must stop generating 
 This is the reason that the threaded model behaves much better when there are fewer requests, as in table \ref{pref128K}.
 
 \subsection{Optimal Performance}
-In order to find the performance peak of each server model, httperf was driven with a distributed autobench session which utilized four machines as clients: \texttt{gotham.cs.uchicago.edu, silver-star.cs.uchicago.edu, barnacle-bill.cs.uchicago.edu} and \texttt{admiral.cs.uchicago.edu}.  Figure \ref{perfpeak} demonstrates the performance of the server at various request rates.
-
-\subsection{Effects of Persistence}\label{perstPerf}
-Figure \ref{perstpeak} demonstrates the benefits of persistent connections.
+In order to find the performance peak of each server model, httperf was driven with a distributed autobench session which utilized four machines as clients: \texttt{gotham.cs.uchicago.edu, silver-star.cs.uchicago.edu, barnacle-bill.cs.uchicago.edu} and \texttt{admiral.cs.uchicago.edu}.
+Figures \ref{perfpeak1} and \ref{perfpeak2} demonstrate the performance of EWE as well as Apache as s8 at various request rates.
+\begin{figure}[ht]\centering
+        \includegraphics[width=.7\textwidth]{peaks1.eps}
+        \caption{Optimal Performance}\label{perfpeak1}
+\end{figure}
+\begin{figure}[hb]\centering
+        \includegraphics[width=.7\textwidth]{peaks2.eps}
+        \caption{Optimal Performance 2}\label{perfpeak2}
+\end{figure}
 
 \section{Known Bugs and Errata}\label{bugs}
 \subsection{HTTP/1.1 Compliance}

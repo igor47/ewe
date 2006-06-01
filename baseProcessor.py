@@ -40,6 +40,7 @@ class baseProcessor:
 				line = list()
 				while True:
 					c = self.sock.recv(1)
+					if len(c) == 0: raise socket.error #connection closed
 					line.append(c)
 					if c == '\n': break
 			except socket.timeout:	#if we have a timeout
@@ -276,6 +277,7 @@ class baseProcessor:
 					try:
 						self.readRequest()
 					except socket.timeout:	#this means persistent connection closed
+						self.sock.close()
 						return
 					self.parseRequest()
 					self.parseUrl()
@@ -284,9 +286,9 @@ class baseProcessor:
 					self.sendError()
 				else:
 					self.sendResponse()
-
+					
 				if not self.persistent:
 					self.sock.close()
 					break
-		except socket.error, e:
-			print "Error communicating with ", address, ": ", e
+		except socket.error:	#means the connection got closed
+			pass					#don't really need to do anything

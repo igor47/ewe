@@ -56,20 +56,27 @@ class threaded:
 		self.config = config
 
 		self.threadList = list()
-		self.mutex = threading.Lock()
+		self.cond = threading.Condition()
 	
 	def process(self,sock,address):
 		thread = threading.Thread(target=self.runThread,
 									args=(sock,address))
 		thread.start()
-	
+
+		#make sure we don't start more then 250 threads
+		#or we run out of file descriptors
+		self.cond.acquire()
+		while len(self.threadList) > 250:
+			self.cond.wait()
+		self.cond.release()
+			
 	def runThread(self,sock,address):
 		processor = baseProcessor.baseProcessor(self.logger, self.config)
 
 		me = threading.currentThread().getName()
-		self.mutex.acquire()
+		self.cond.acquire()
 		self.threadList.append(me)
-		self.mutex.release()
+		self.cond.release()
 
 		try:
 			processor.serveRequest(sock,address)
@@ -77,15 +84,13 @@ class threaded:
 			print "Server thread ", me, "encounted an error"
 			print sys.exc_info()
 
-		self.mutex.acquire()
+		self.cond.acquire()
 		self.threadList.remove(me)
-		self.mutex.release()
+		self.cond.notifyAll()
+		self.cond.release()
 
 	def quit(self):
-		self.mutex.acquire()
-		left = len(self.threadList)
-		self.mutex.release()
-		if left > 0:
+		if len(self.threadList) > 0:
 			print "Warning:", left, " threads are still running"
 
 class threadpool:
